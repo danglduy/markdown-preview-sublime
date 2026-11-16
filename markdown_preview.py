@@ -48,14 +48,15 @@ def highlight_code(code, lang, attrs):
     return pygments.highlight(code, lexer, HtmlFormatter(nowrap=True))
 
 
-# GitHub-flavoured: CommonMark plus tables, strikethrough, task lists, footnotes and heading anchors.
+# GitHub-flavoured: CommonMark plus tables, strikethrough, task lists, footnotes, and heading ids with a "#" link
+# to each heading, shown in the margin on hover like GitHub's.
 # Bare URLs are not autolinked: that needs linkify-it-py and uc-micro-py vendored and the "linkify" rule enabled.
 MARKDOWN = (
     MarkdownIt("commonmark", {"highlight": highlight_code})
     .enable(["table", "strikethrough"])
     .use(tasklists_plugin)
     .use(footnote_plugin)
-    .use(anchors_plugin, max_level=6)
+    .use(anchors_plugin, max_level=6, permalink=True, permalinkSymbol="#", permalinkBefore=True, permalinkSpace=False)
 )
 
 @functools.lru_cache(maxsize=None)
@@ -250,6 +251,9 @@ h3 { font-size: 1.25em; }
 h4 { font-size: 1em; }
 h5 { font-size: .875em; }
 h6 { font-size: .85em; color: var(--muted); }
+.header-anchor { float: left; width: 20px; margin-left: -24px; text-align: right; font-weight: 400; color: var(--muted); opacity: 0; }
+h1:hover .header-anchor, h2:hover .header-anchor, h3:hover .header-anchor, h4:hover .header-anchor,
+h5:hover .header-anchor, h6:hover .header-anchor, .header-anchor:focus { opacity: 1; text-decoration: none; }
 p, blockquote, ul, ol, dl, table, pre, details { margin: 0 0 16px; }
 ul, ol { padding-left: 2em; }
 li + li { margin-top: .25em; }

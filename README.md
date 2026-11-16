@@ -3,7 +3,8 @@
 Preview the current Markdown buffer in your browser with GitHub styling, rendered locally by [markdown-it-py](https://github.com/executablebooks/markdown-it-py). Nothing to install besides the package.
 
 - Renders the buffer, so unsaved edits show up
-- GitHub-flavoured Markdown (CommonMark): tables, strikethrough, task lists, footnotes, heading anchors, 2-space nested lists
+- GitHub-flavoured Markdown (CommonMark): tables, strikethrough, task lists, footnotes, 2-space nested lists
+- A `#` link beside each heading on hover, as on GitHub, for linking straight to a section
 - Code highlighting with Pygments, installed automatically by Package Control
 - Mermaid diagrams from ```mermaid blocks, drawn by a bundled copy of Mermaid (loaded only when a document has one)
 - GitHub look, following the system light/dark mode, no network requests

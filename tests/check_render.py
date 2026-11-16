@@ -128,7 +128,7 @@ def render(source, folders=(PROJECT,)):
 # Rendering.
 path, page, body, images = render(SOURCE)
 assert "<title>readme.md</title>" in page
-assert '<h1 id="title">' in body
+assert '<h1 id="title"><a class="header-anchor" href="#title">#</a>Title</h1>' in body
 assert body.count("<ul") >= 2, "two-space nested list should nest"
 assert "<table>" in body and "<s>gone</s>" in body
 assert 'class="task-list-item-checkbox"' in body and 'class="footnotes"' in body
@@ -200,7 +200,8 @@ if browser:
     assert "swallow the rest" in hostile, "a forbidden tag's text stays as plain text"
 
     normal = shown(browser, path)
-    assert '<h1 id="user-content-title">' in normal and '<a href="#user-content-title">' in normal, "same tab"
+    assert '<h1 id="user-content-title"><a class="header-anchor" href="#user-content-title">#</a>' in normal
+    assert '<a href="#user-content-title">jump to title</a>' in normal, "in-page links stay in the same tab"
     # Both links, including the raw one asking for target="_self" rel="opener": new tab, no opener, no referrer.
     for site in ["https://example.com", "https://example.org"]:
         link = re.search(r'<a href="%s"[^>]*>' % re.escape(site), normal).group(0)
