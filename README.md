@@ -51,6 +51,13 @@ Remote images load over `https` only, as in VS Code's strict preview. They still
 
 ## Development
 
+`markdown_preview.py` is the Sublime command; Sublime loads only top-level `.py` files as plugins, so the rest lives in the `preview/` package:
+
+1. `render.py` turns Markdown into HTML with the vendored markdown-it-py.
+2. `images.py` embeds the document's local images as data URIs.
+3. `page.py` fills `template.html` (GitHub's styles) and inlines the scripts: DOMPurify, `sanitize.js`, which cleans and shows the document, and, for documents with diagrams, Mermaid with `mermaid-init.js`.
+4. `files.py` writes the private preview file and removes old ones.
+
 `vendor/` holds unmodified copies of markdown-it-py 3.0.0, mdurl 0.1.2 and mdit-py-plugins 0.4.2, plus the browser builds of Mermaid 12.2.0 (MIT) and DOMPurify 3.4.17 (MPL-2.0 or Apache-2.0), licences alongside. The Python libraries are the last releases that still support the Python 3.8 plugin host of older Sublime Text 4 builds.
 
 To update them, change the pinned versions in `scripts/update-vendor.sh` and run it. It rebuilds `vendor/` from PyPI.

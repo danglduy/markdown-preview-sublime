@@ -18,8 +18,12 @@ import webbrowser
 
 sys.modules["sublime"] = types.SimpleNamespace(Region=lambda a, b: (a, b))
 sys.modules["sublime_plugin"] = types.SimpleNamespace(TextCommand=object)
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-import markdown_preview  # noqa: E402
+# Load the repo as a package, the way Sublime does, so the plugin's relative imports resolve.
+package = types.ModuleType("markdown_preview_sublime")
+package.__path__ = [os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")]
+sys.modules[package.__name__] = package
+from markdown_preview_sublime import markdown_preview  # noqa: E402
+from markdown_preview_sublime.preview import files, render as renderer  # noqa: E402
 
 PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
@@ -133,11 +137,11 @@ assert body.count("<ul") >= 2, "two-space nested list should nest"
 assert "<table>" in body and "<s>gone</s>" in body
 assert 'class="task-list-item-checkbox"' in body and 'class="footnotes"' in body
 assert '<pre class="mermaid">graph LR\n  A[Start] --&gt; B{Done?}\n</pre>' in body
-if markdown_preview.pygments:
+if renderer.pygments:
     assert '<span class="nb">puts</span>' in body, "code should be coloured"
 
 # Nothing points back at the original file or the plugin's folder.
-for leak in [PROJECT, OUTSIDE, markdown_preview.VENDOR, "<base", "file://"]:
+for leak in [PROJECT, OUTSIDE, renderer.VENDOR, "<base", "file://"]:
     assert leak not in page, leak
 
 # Local images are embedded only from inside the document's folder or its project folder, and only images.
@@ -163,8 +167,8 @@ assert hostile_page.count('<script nonce="') == 2, "a placeholder in the documen
 assert "%(scripts)s %(nonce)s" in hostile_body
 
 # Previews older than a day are removed; newer ones stay.
-old = tempfile.mkstemp(prefix=markdown_preview.PREVIEW_PREFIX, suffix=".html")[1]
-os.utime(old, (time.time() - 2 * markdown_preview.PREVIEW_MAX_AGE,) * 2)
+old = tempfile.mkstemp(prefix=files.PREVIEW_PREFIX, suffix=".html")[1]
+os.utime(old, (time.time() - 2 * files.PREVIEW_MAX_AGE,) * 2)
 render("# again")
 assert not os.path.exists(old) and os.path.exists(path)
 
@@ -177,13 +181,17 @@ def find_browser():
     return next(filter(None, map(shutil.which, ["google-chrome", "chromium", "chromium-browser"])), None)
 
 
-def shown(browser, preview_path):
-    """The <main> content after the page's scripts ran."""
-    dom = subprocess.run(
+def dump_dom(browser, preview_path):
+    """The page's DOM after its scripts ran."""
+    return subprocess.run(
         [browser, "--headless", "--disable-gpu", "--virtual-time-budget=8000", "--dump-dom", "file://" + preview_path],
         capture_output=True, text=True, timeout=60,
     ).stdout
-    main = re.search(r'<main id="content">(.*?)</main>', dom, re.S)
+
+
+def shown(browser, preview_path):
+    """The <main> content after the page's scripts ran."""
+    main = re.search(r'<main id="content">(.*?)</main>', dump_dom(browser, preview_path), re.S)
     assert main, "preview content missing: the page was redirected or replaced (e.g. by an unsanitized <meta> refresh)"
     return main.group(1)
 
@@ -235,18 +243,15 @@ if browser:
     probed = path.replace(".html", "-probe.html")
     with open(probed, "w", encoding="utf-8") as out:
         out.write(page[:page.rindex("</body>")] + probe + page[page.rindex("</body>") + len("</body>"):])
-    dom = subprocess.run(
-        [browser, "--headless", "--disable-gpu", "--virtual-time-budget=8000", "--dump-dom", "file://" + probed],
-        capture_output=True, text=True, timeout=60,
-    ).stdout
+    dom = dump_dom(browser, probed)
     os.remove(probed)
     result = json.loads(re.search(r"data-probe=\"([^\"]*)\"", dom).group(1).replace("&quot;", '"'))
     assert result["restingOpacity"] == "0" and result["restingDelay"] == "0.15s", result
     assert result["focused"] and result["hash"] == "#user-content-title", "clicked link keeps focus: %s" % result
     assert result["opacity"] == "1" and result["outline"] == "auto", "focused link shows with a native ring"
     assert result["scrollBehavior"] == "smooth" and result["scrollMargin"] == "24px", result
-    print("ok, pygments:", bool(markdown_preview.pygments), "| browser checks: passed")
+    print("ok, pygments:", bool(renderer.pygments), "| browser checks: passed")
 else:
-    print("ok, pygments:", bool(markdown_preview.pygments), "| browser checks: skipped (no Chrome/Chromium)")
+    print("ok, pygments:", bool(renderer.pygments), "| browser checks: skipped (no Chrome/Chromium)")
 
 shutil.rmtree(OUTSIDE)

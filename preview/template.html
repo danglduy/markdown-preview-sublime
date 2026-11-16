@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<!-- A hand-trimmed copy of GitHub's look; the full github-markdown-css covers rarer elements if they ever look off. -->
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-%(nonce)s'; style-src 'unsafe-inline'; img-src data: https:; media-src https:; font-src data:; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>%(title)s</title>
+<style>
+:root {
+  --fg: #1f2328; --muted: #59636e; --bg: #ffffff; --border: #d1d9e0; --code-bg: #f6f8fa;
+  --link: #0969da; --row-alt: #f6f8fa;
+  --kw: #cf222e; --str: #0a3069; --com: #59636e; --num: #0550ae; --fn: #6639ba; --type: #953800; --tag: #116329;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #f0f6fc; --muted: #9198a1; --bg: #0d1117; --border: #3d444d; --code-bg: #151b23;
+    --link: #4493f8; --row-alt: #151b23;
+    --kw: #ff7b72; --str: #a5d6ff; --com: #9198a1; --num: #79c0ff; --fn: #d2a8ff; --type: #ffa657; --tag: #7ee787;
+  }
+}
+html { background: var(--bg); scroll-behavior: smooth; }
+body {
+  box-sizing: border-box; max-width: 980px; margin: 0 auto; padding: 45px;
+  color: var(--fg); background: var(--bg);
+  font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  word-wrap: break-word;
+}
+@media (max-width: 767px) { body { padding: 15px; } }
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+h1, h2, h3, h4, h5, h6 { position: relative; margin: 24px 0 16px; font-weight: 600; line-height: 1.25; }
+h1 { font-size: 2em; padding-bottom: .3em; border-bottom: 1px solid var(--border); }
+h2 { font-size: 1.5em; padding-bottom: .3em; border-bottom: 1px solid var(--border); }
+h3 { font-size: 1.25em; }
+h4 { font-size: 1em; }
+h5 { font-size: .875em; }
+h6 { font-size: .85em; color: var(--muted); }
+/* Jumping to a heading or footnote lands a little below the window's top edge, not flush against it. */
+main [id] { scroll-margin-top: 24px; }
+/* The icon sits in a 32px strip of the left margin that touches the heading, so moving between them never leaves
+   the hover area. It fades in at once and out after a short pause, so a quick pass never blinks. */
+.header-anchor {
+  position: absolute; top: 0; bottom: 0; left: -32px; width: 32px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--fg); opacity: 0; transition: opacity .2s ease .15s;
+}
+.header-anchor svg { fill: currentColor; }
+:is(h1, h2, h3, h4, h5, h6):hover .header-anchor, .header-anchor:focus { opacity: 1; transition-delay: 0s; }
+/* Show the browser's own focus ring even after a mouse click, so the clicked link stays marked after scrolling. */
+.header-anchor:focus { outline: auto; outline-color: -webkit-focus-ring-color; }
+@media (max-width: 767px) { .header-anchor { left: -20px; width: 20px; } }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .header-anchor { transition: none; } }
+p, blockquote, ul, ol, dl, table, pre, details { margin: 0 0 16px; }
+ul, ol { padding-left: 2em; }
+li + li { margin-top: .25em; }
+.task-list-item { list-style: none; }
+.task-list-item-checkbox { margin: 0 .2em .25em -1.4em; vertical-align: middle; }
+blockquote { padding: 0 1em; color: var(--muted); border-left: .25em solid var(--border); }
+hr { height: .25em; margin: 24px 0; padding: 0; border: 0; background: var(--border); }
+img { max-width: 100%; }
+code, pre { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; font-size: 85%; }
+code { padding: .2em .4em; border-radius: 6px; background: var(--code-bg); }
+pre { padding: 16px; overflow: auto; line-height: 1.45; border-radius: 6px; background: var(--code-bg); }
+pre code { padding: 0; font-size: 100%; background: transparent; }
+table { display: block; width: max-content; max-width: 100%; overflow: auto; border-collapse: collapse; }
+th, td { padding: 6px 13px; border: 1px solid var(--border); }
+th { font-weight: 600; }
+tr:nth-child(2n) { background: var(--row-alt); }
+.footnotes-sep { display: none; }
+.footnotes { margin-top: 32px; padding-top: 16px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); }
+pre .k, pre .kc, pre .kd, pre .kn, pre .kp, pre .kr, pre .ow, pre .o { color: var(--kw); }
+pre .s, pre .s1, pre .s2, pre .sa, pre .sb, pre .sc, pre .sd, pre .se, pre .sh, pre .si, pre .sr, pre .ss, pre .sx { color: var(--str); }
+pre .c, pre .c1, pre .ch, pre .cm, pre .cp, pre .cpf, pre .cs { color: var(--com); }
+pre .m, pre .mb, pre .mf, pre .mh, pre .mi, pre .mo, pre .il, pre .nb, pre .bp, pre .no, pre .na { color: var(--num); }
+pre .nf, pre .fm, pre .nc, pre .nd, pre .nn { color: var(--fn); }
+pre .kt, pre .nv, pre .vc, pre .vg, pre .vi { color: var(--type); }
+pre .nt { color: var(--tag); }
+pre.mermaid { font-size: 100%; text-align: center; background: transparent; }
+</style>
+</head>
+<body>
+<main id="content"></main>
+<noscript>This preview needs JavaScript: it cleans the document's HTML in the browser before showing it.</noscript>
+<script type="application/json" id="source">%(body)s</script>
+<script type="application/json" id="images">%(images)s</script>
+%(scripts)s</body>
+</html>
