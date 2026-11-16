@@ -218,11 +218,11 @@ if browser:
     for name in ["site", "raw"]:
         assert re.search(r'>%s<svg class="octicon external-icon"[^>]*aria-hidden="true"><path d="M4\.53' % name, normal), name
     assert normal.count("external-icon") == 4, "only outbound links get the new-tab arrow"
-    # For printing: notes after links (numbered on from the one document footnote, repeats share a number), none for
-    # a link that already shows its address, and the addresses listed at the end.
-    refs = re.findall(r'<a href="([^"]*)"[^>]*>(?:(?!</a>).)*</a><sup class="print-only print-ref">\[(\d)\]</sup>', normal)
-    assert refs == [("https://example.com", "2"), ("https://example.com", "2"), ("https://example.org", "3")], refs
-    assert '<ol start="2"><li>https://example.com</li><li>https://example.org</li></ol>' in normal
+    # For printing: notes after links (their own L1, L2… sequence, apart from the document's footnote; repeats share
+    # a number), none for a link that already shows its address, and the addresses listed at the end.
+    refs = re.findall(r'<a href="([^"]*)"[^>]*>(?:(?!</a>).)*</a><sup class="print-only print-ref">\[(L\d)\]</sup>', normal)
+    assert refs == [("https://example.com", "L1"), ("https://example.com", "L1"), ("https://example.org", "L2")], refs
+    assert '<ol><li>https://example.com</li><li>https://example.org</li></ol>' in normal
     assert 'href="#user-content-fn1"' in normal and 'id="user-content-fn1"' in normal, "footnotes still link"
     assert 'type="checkbox"' in normal, "task-list checkboxes survive"
     assert 'src="data:image/png;base64,' in normal and 'src="data:image/svg+xml;base64,' in normal, "images embed"

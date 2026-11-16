@@ -30,10 +30,10 @@
     FORBID_ATTR: ["style"],
   });
   // Paper can't follow a link, so printing shows where each one goes: a numbered note after the link and the full
-  // address in a list at the end. Numbers carry on from the document's own footnotes; repeated addresses share one.
+  // address in a list at the end. Notes are L1, L2… so they never look like the document's own footnotes; repeated
+  // addresses share one.
   const printed = new Map();
   const bare = (url) => url.replace(/^(https?:\/\/|mailto:)/i, "").replace(/\/$/, "");
-  const footnotes = clean.querySelectorAll(".footnote-item").length;
   for (const link of clean.querySelectorAll("a[href]")) {
     const href = link.getAttribute("href");
     if (href.startsWith("#")) {
@@ -49,10 +49,10 @@
       link.append(external.cloneNode(true));
       // A link that already reads as its address needs no note.
       if (bare(text) === bare(href)) continue;
-      if (!printed.has(href)) printed.set(href, footnotes + printed.size + 1);
+      if (!printed.has(href)) printed.set(href, printed.size + 1);
       const note = document.createElement("sup");
       note.className = "print-only print-ref";
-      note.textContent = "[" + printed.get(href) + "]";
+      note.textContent = "[L" + printed.get(href) + "]";
       link.after(note);
     }
   }
@@ -69,7 +69,6 @@
     const heading = document.createElement("p");
     heading.textContent = "Links";
     const list = document.createElement("ol");
-    list.start = footnotes + 1;
     for (const href of printed.keys()) {
       const item = document.createElement("li");
       item.textContent = href;
