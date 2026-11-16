@@ -251,9 +251,20 @@ h3 { font-size: 1.25em; }
 h4 { font-size: 1em; }
 h5 { font-size: .875em; }
 h6 { font-size: .85em; color: var(--muted); }
-.header-anchor { float: left; width: 20px; margin-left: -24px; text-align: right; font-weight: 400; color: var(--muted); opacity: 0; }
+h1, h2, h3, h4, h5, h6 { position: relative; }
+/* The # sits in a 32px strip of the left margin, centred on the heading line at a fixed size like GitHub's link
+   icon. Hovering the heading or that strip fades it in. */
+.header-anchor {
+  position: absolute; top: 0; bottom: 0; left: -32px; width: 32px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; font-weight: 500; line-height: 1; color: var(--muted); text-decoration: none;
+  opacity: 0; transition: opacity .2s ease, color .2s ease;
+}
 h1:hover .header-anchor, h2:hover .header-anchor, h3:hover .header-anchor, h4:hover .header-anchor,
-h5:hover .header-anchor, h6:hover .header-anchor, .header-anchor:focus { opacity: 1; text-decoration: none; }
+h5:hover .header-anchor, h6:hover .header-anchor, .header-anchor:focus-visible { opacity: 1; }
+.header-anchor:hover { color: var(--link); text-decoration: none; }
+@media (max-width: 767px) { .header-anchor { left: -16px; width: 16px; } }
+@media (prefers-reduced-motion: reduce) { .header-anchor { transition: none; } }
 p, blockquote, ul, ol, dl, table, pre, details { margin: 0 0 16px; }
 ul, ol { padding-left: 2em; }
 li + li { margin-top: .25em; }
