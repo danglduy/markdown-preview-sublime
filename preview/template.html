@@ -52,6 +52,15 @@ main [id] { scroll-margin-top: 24px; }
 .header-anchor:focus { outline: auto; outline-color: -webkit-focus-ring-color; }
 @media (max-width: 767px) { .header-anchor { left: -20px; width: 20px; } }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .header-anchor { transition: none; } }
+.external-icon { margin-left: .15em; vertical-align: -.05em; fill: currentColor; }
+/* On paper the new-tab arrow means nothing; instead each link gets a numbered note and its address in a list. */
+.print-links { margin-top: 32px; padding-top: 16px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); }
+.print-links p { margin: 0 0 8px; font-weight: 600; }
+.print-links ol { list-style: link-notes; }
+.print-links li { word-break: break-all; }
+@counter-style link-notes { system: extends decimal; prefix: "L"; }
+@media screen { .print-only { display: none; } }
+@media print { .external-icon { display: none; } }
 p, blockquote, ul, ol, dl, table, pre, details { margin: 0 0 16px; }
 ul, ol { padding-left: 2em; }
 li + li { margin-top: .25em; }
