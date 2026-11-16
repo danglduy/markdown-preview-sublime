@@ -1,13 +1,17 @@
+import base64
+import functools
 import glob
 import html
-import os
 import json
+import os
 import pathlib
+import re
 import secrets
 import stat
 import sys
 import tempfile
 import time
+import urllib.parse
 import webbrowser
 
 import sublime
@@ -54,8 +58,15 @@ MARKDOWN = (
     .use(anchors_plugin, max_level=6)
 )
 
-def vendor_uri(*parts):
-    return html.escape(pathlib.Path(VENDOR, *parts).as_uri(), quote=True)
+@functools.lru_cache(maxsize=None)
+def inline_script(*parts):
+    """A vendored script's source, for putting straight into the page so it never references the plugin's folder."""
+    with open(os.path.join(VENDOR, *parts), encoding="utf-8") as script:
+        source = script.read()
+    # Inside an inline <script>, "</script" would end it early and "<script" can stop the real end tag counting.
+    if "<script" in source.lower() or "</script" in source.lower():
+        raise RuntimeError("%s can't be inlined safely: it contains a <script or </script sequence" % "/".join(parts))
+    return source
 
 
 # Raw HTML in the document stays allowed (READMEs use <details>, <img width>, <p align>), so the rendered HTML is
@@ -65,12 +76,13 @@ def vendor_uri(*parts):
 # Beyond DOMPurify's defaults, like GitHub: no <style> or style= (no overlays or CSS beacons), no form controls
 # except task-list checkboxes, and every id/name gets a "user-content-" prefix so the document can't replace
 # page properties our scripts rely on (DOM clobbering). In-page links are pointed at the prefixed ids to match.
-SANITIZE_SCRIPT = """<script nonce="%(nonce)s" src="__PURIFY_JS__"></script>
-<script nonce="%(nonce)s">
+# Local images are swapped for the data: URIs Python embedded, since the page has no <base> to find them by.
+SANITIZE_SCRIPT = """<script nonce="%(nonce)s">
 (() => {
   const content = document.getElementById("content");
-  const source = document.getElementById("source");
-  const clean = DOMPurify.sanitize(JSON.parse(source.textContent), {
+  const source = JSON.parse(document.getElementById("source").textContent);
+  const images = new Map(Object.entries(JSON.parse(document.getElementById("images").textContent)));
+  const clean = DOMPurify.sanitize(source, {
     RETURN_DOM_FRAGMENT: true,
     SANITIZE_NAMED_PROPS: true,
     FORBID_TAGS: ["style", "form", "button", "textarea", "select"],
@@ -80,28 +92,85 @@ SANITIZE_SCRIPT = """<script nonce="%(nonce)s" src="__PURIFY_JS__"></script>
     const target = link.getAttribute("href").slice(1);
     if (target && !target.startsWith("user-content-")) link.setAttribute("href", "#user-content-" + target);
   }
+  for (const image of clean.querySelectorAll("img[src]")) {
+    const embedded = images.get(image.getAttribute("src"));
+    if (embedded) image.setAttribute("src", embedded);
+  }
   content.append(clean);
 })();
 </script>
-""".replace("__PURIFY_JS__", vendor_uri("dompurify", "purify.min.js"))
+"""
 
 # Loaded only when the document has a diagram; the theme follows the system light/dark mode like the page.
 # "strict" makes Mermaid escape HTML in labels and ignore click handlers written in the diagram.
-MERMAID_SCRIPT = """<script nonce="%(nonce)s" src="__MERMAID_JS__"></script>
-<script nonce="%(nonce)s">
+MERMAID_SCRIPT = """<script nonce="%(nonce)s">
 mermaid.initialize({
   startOnLoad: true,
   securityLevel: "strict",
   theme: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default",
 });
 </script>
-""".replace("__MERMAID_JS__", vendor_uri("mermaid", "mermaid.min.js"))
+"""
 
 
-def inert_json(text):
+def scripts_for(body, nonce):
+    """Our scripts, with the vendored libraries inlined. Sanitize first: Mermaid must only ever see the cleaned page."""
+    opening = '<script nonce="%s">' % nonce
+    scripts = [opening + inline_script("dompurify", "purify.min.js") + "</script>\n", SANITIZE_SCRIPT]
+    if '<pre class="mermaid">' in body:
+        scripts += [opening + inline_script("mermaid", "mermaid.min.js") + "</script>\n", MERMAID_SCRIPT]
+    return "".join(script.replace('<script nonce="%(nonce)s">', opening) for script in scripts)
+
+
+def inert_json(value):
     """JSON for a <script type="application/json"> block. Escaping < > & means the text can never close the
     block or start markup, so the browser only ever sees it as a string."""
-    return json.dumps(text).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+    return json.dumps(value).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+
+
+# Local images the page may embed. SVG is safe here: inside <img> its scripts never run.
+IMAGE_TYPES = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+    ".avif": "image/avif", ".svg": "image/svg+xml", ".bmp": "image/bmp", ".ico": "image/x-icon",
+}
+IMAGE_MAX_BYTES = 10 * 1024 * 1024
+IMAGE_SRC = re.compile(r"""<img\b[^>]*?\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", re.IGNORECASE)
+
+
+def is_within(path, root):
+    try:
+        return os.path.commonpath([path, root]) == root
+    except ValueError:  # different drives on Windows
+        return False
+
+
+def embed_local_images(body, file_name, folders):
+    """Map each relative <img src> in the rendered HTML to a data: URI of the file it names.
+
+    Like VS Code's preview, only files inside the document's folder or a Sublime project folder that contains it
+    are read, and only image types, so a hostile document can't pull in ~/.ssh/id_rsa with "../../".
+    """
+    doc_dir = os.path.realpath(os.path.dirname(file_name))
+    roots = [doc_dir] + [root for root in map(os.path.realpath, folders) if is_within(doc_dir, root)]
+    images = {}
+    for match in IMAGE_SRC.finditer(body):
+        src = html.unescape(next(group for group in match.groups() if group is not None))
+        url = urllib.parse.urlsplit(src)
+        if src in images or url.scheme or url.netloc or not url.path or src.startswith(("/", "\\")):
+            continue
+        path = os.path.realpath(os.path.join(doc_dir, urllib.parse.unquote(url.path)))
+        mime = IMAGE_TYPES.get(os.path.splitext(path)[1].lower())
+        if not mime or not any(is_within(path, root) for root in roots):
+            continue
+        try:
+            if os.path.getsize(path) > IMAGE_MAX_BYTES:
+                continue
+            with open(path, "rb") as image:
+                images[src] = "data:%s;base64,%s" % (mime, base64.b64encode(image.read()).decode("ascii"))
+        except OSError:
+            pass
+    return images
+
 
 # Previews hold the document's text, so don't leave them in the temp folder for good.
 PREVIEW_PREFIX = "markdown-preview-"
@@ -121,6 +190,7 @@ def remove_old_previews():
         except OSError:
             pass
 
+
 default_fence = MARKDOWN.renderer.rules["fence"]
 
 
@@ -139,9 +209,9 @@ PAGE = """<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-%(nonce)s'; style-src 'unsafe-inline'; img-src file: data: https:; media-src file: https:; font-src data:; base-uri file:; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-%(nonce)s'; style-src 'unsafe-inline'; img-src data: https:; media-src https:; font-src data:; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-%(base)s<title>%(title)s</title>
+<title>%(title)s</title>
 <style>
 :root {
   --fg: #1f2328; --muted: #59636e; --bg: #ffffff; --border: #d1d9e0; --code-bg: #f6f8fa;
@@ -204,9 +274,13 @@ pre.mermaid { font-size: 100%; text-align: center; background: transparent; }
 <main id="content"></main>
 <noscript>This preview needs JavaScript: it cleans the document's HTML in the browser before showing it.</noscript>
 <script type="application/json" id="source">%(body)s</script>
+<script type="application/json" id="images">%(images)s</script>
 %(scripts)s</body>
 </html>
 """
+
+
+PLACEHOLDER = re.compile(r"%\((nonce|title|body|images|scripts)\)s")
 
 
 class MarkdownPreviewInBrowserCommand(sublime_plugin.TextCommand):
@@ -218,26 +292,25 @@ class MarkdownPreviewInBrowserCommand(sublime_plugin.TextCommand):
         # Read the buffer, not the file, so unsaved edits show up.
         source = self.view.substr(sublime.Region(0, self.view.size()))
 
-        base = ""
-        if file_name:
-            # Resolve relative images and links against the markdown file's folder.
-            base_url = pathlib.Path(os.path.dirname(file_name)).as_uri() + "/"
-            base = '<base href="%s">\n' % html.escape(base_url, quote=True)
-
-        # str.replace, not %: the CSS is full of literal % signs. Body goes last so its text is never rescanned.
-        title = html.escape(os.path.basename(file_name) if file_name else "Untitled")
+        # The page never points back at the original file: no <base>, no folder path, no file:// URLs.
+        # Only the file's name is kept, as the tab title.
+        # Local images are embedded instead, which needs the project folders to know what may be read.
         body = MARKDOWN.render(source)
-        # Sanitize first: Mermaid must only ever see the cleaned page.
-        scripts = SANITIZE_SCRIPT + (MERMAID_SCRIPT if '<pre class="mermaid">' in body else "")
+        window = self.view.window()
+        folders = window.folders() if window else []
+        images = embed_local_images(body, file_name, folders) if file_name else {}
         # A fresh nonce per preview: only our own script tags carry it, so scripts in the document can't run.
         nonce = secrets.token_urlsafe(16)
-        page = (
-            PAGE.replace("%(base)s", base)
-            .replace("%(title)s", title)
-            .replace("%(scripts)s", scripts)
-            .replace("%(nonce)s", nonce)
-            .replace("%(body)s", inert_json(body))
-        )
+        values = {
+            "nonce": nonce,
+            "title": html.escape(os.path.basename(file_name) if file_name else "Untitled"),
+            "body": inert_json(body),
+            "images": inert_json(images),
+            "scripts": scripts_for(body, nonce),
+        }
+        # One pass, so nothing filled in is scanned again: the document's text can't smuggle in a placeholder.
+        # (The CSS's literal % signs never match the placeholder pattern.)
+        page = PLACEHOLDER.sub(lambda match: values[match.group(1)], PAGE)
 
         remove_old_previews()
         # mkstemp creates the file readable only by the current user, with a random name nobody can pre-create.

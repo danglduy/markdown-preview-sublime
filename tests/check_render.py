@@ -1,8 +1,10 @@
 """Run with plain Python from the repo root: python3 tests/check_render.py (Sublime only loads top-level .py files).
 
-The Python part checks rendering and the page structure. Sanitizing happens in the browser, so the second part
-opens previews in headless Chrome/Chromium and checks the DOM it actually shows; it's skipped if none is found.
+The Python part checks rendering, the page structure and image embedding. Sanitizing happens in the browser, so the
+second part opens previews in headless Chrome/Chromium and checks the DOM it actually shows; it's skipped if none
+is found.
 """
+import base64
 import json
 import os
 import re
@@ -19,6 +21,27 @@ sys.modules["sublime_plugin"] = types.SimpleNamespace(TextCommand=object)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import markdown_preview  # noqa: E402
 
+PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+)
+
+# A throwaway project: <outside>/secret.png sits outside it, and docs/escape.png is a symlink pointing at it.
+OUTSIDE = tempfile.mkdtemp()
+PROJECT = os.path.join(OUTSIDE, "my project")
+DOCS = os.path.join(PROJECT, "docs")
+os.makedirs(os.path.join(DOCS, "img"))
+os.makedirs(os.path.join(PROJECT, "assets"))
+for path, data in [
+    (os.path.join(DOCS, "img", "pic.png"), PNG),
+    (os.path.join(PROJECT, "assets", "logo.svg"), b'<svg xmlns="http://www.w3.org/2000/svg"/>'),
+    (os.path.join(OUTSIDE, "secret.png"), PNG),
+    (os.path.join(DOCS, "notes.txt"), b"not an image"),
+]:
+    with open(path, "wb") as out:
+        out.write(data)
+os.symlink(os.path.join(OUTSIDE, "secret.png"), os.path.join(DOCS, "escape.png"))
+DOC = os.path.join(DOCS, "readme.md")
+
 SOURCE = """# Title
 
 [jump to title](#title)
@@ -33,7 +56,8 @@ SOURCE = """# Title
 - [x] done
 ~~gone~~ and a note[^1]
 
-![pic](img/pic.png)
+![pic](img/pic.png) <img src="../assets/logo.svg" width="40">
+![secret](../../secret.png) ![text](notes.txt) ![link](escape.png)
 
 ```ruby
 puts "hi"
@@ -59,7 +83,7 @@ hi <img/onerror="alert(2)" src=x> <img src="x"onerror="alert(3)"> [a](javascript
 
 <details><summary>Kept</summary>safe html</details>
 
-</script><script>alert(6)</script>
+</script><script>alert(6)</script> %(scripts)s %(nonce)s
 
 <textarea>
 swallow the rest
@@ -67,11 +91,12 @@ swallow the rest
 
 
 class FakeView:
-    def __init__(self, source):
+    def __init__(self, source, folders):
         self.source = source
+        self.folders = folders
 
     def file_name(self):
-        return "/tmp/my notes/readme.md"
+        return DOC
 
     def substr(self, region):
         return self.source
@@ -79,46 +104,62 @@ class FakeView:
     def size(self):
         return len(self.source)
 
+    def window(self):
+        return types.SimpleNamespace(folders=lambda: self.folders)
 
-def render(source):
-    """Return the preview's path, the page as written, and the rendered HTML held in its JSON block."""
+
+def render(source, folders=(PROJECT,)):
+    """Return the preview's path, the page as written, and the rendered HTML and images held in its JSON blocks."""
     opened = []
     webbrowser.open = opened.append
     command = markdown_preview.MarkdownPreviewInBrowserCommand()
-    command.view = FakeView(source)
+    command.view = FakeView(source, list(folders))
     command.run(None)
     path = opened[0][len("file://"):]
     page = open(path, encoding="utf-8").read()
-    data = re.search(r'<script type="application/json" id="source">(.*?)</script>', page, re.S).group(1)
-    return path, page, json.loads(data)
+
+    def block(name):
+        data = re.search(r'<script type="application/json" id="%s">(.*?)</script>' % name, page, re.S).group(1)
+        return json.loads(data)
+
+    return path, page, block("source"), block("images")
 
 
 # Rendering.
-path, page, body = render(SOURCE)
-assert '<base href="file:///tmp/my%20notes/">' in page
+path, page, body, images = render(SOURCE)
 assert "<title>readme.md</title>" in page
 assert '<h1 id="title">' in body
 assert body.count("<ul") >= 2, "two-space nested list should nest"
 assert "<table>" in body and "<s>gone</s>" in body
 assert 'class="task-list-item-checkbox"' in body and 'class="footnotes"' in body
-assert 'src="img/pic.png"' in body
 assert '<pre class="mermaid">graph LR\n  A[Start] --&gt; B{Done?}\n</pre>' in body
 if markdown_preview.pygments:
     assert '<span class="nb">puts</span>' in body, "code should be coloured"
 
+# Nothing points back at the original file or the plugin's folder.
+for leak in [PROJECT, OUTSIDE, markdown_preview.VENDOR, "<base", "file://"]:
+    assert leak not in page, leak
+
+# Local images are embedded only from inside the document's folder or its project folder, and only images.
+assert images["img/pic.png"] == "data:image/png;base64," + base64.b64encode(PNG).decode()
+assert images["../assets/logo.svg"].startswith("data:image/svg+xml;base64,"), "project folder images embed"
+for refused in ["../../secret.png", "notes.txt", "escape.png"]:
+    assert refused not in images, refused
+assert "../assets/logo.svg" not in render(SOURCE, folders=())[3], "without a project, only the document's folder"
+
 # Page structure: the document is only ever an inert string, and only our scripts carry the nonce.
 assert oct(os.stat(path).st_mode & 0o777) == "0o600"
 assert "<h1" not in page, "rendered HTML must not appear in the page as markup"
-assert "Content-Security-Policy" in page and "script-src 'nonce-" in page and " http:" not in page
+csp = re.search(r'http-equiv="Content-Security-Policy" content="([^"]*)"', page).group(1)
+assert "script-src 'nonce-" in csp and " http:" not in csp and "file:" not in csp and "base-uri 'none'" in csp
 assert page.count('<script nonce="') == 4, "DOMPurify, its init, Mermaid and its init"
-assert "purify.min.js" in page and os.path.exists(markdown_preview.VENDOR + "/dompurify/purify.min.js")
-assert "mermaid.min.js" in page and os.path.exists(markdown_preview.VENDOR + "/mermaid/mermaid.min.js")
 plain_page = render("# No diagrams")[1]
-assert "mermaid.min.js" not in plain_page and plain_page.count('<script nonce="') == 2, "Mermaid only when needed"
+assert "mermaid.initialize" not in plain_page and plain_page.count('<script nonce="') == 2, "Mermaid only if needed"
 
-hostile_path, hostile_page, _ = render(HOSTILE)
+hostile_path, hostile_page, hostile_body, _ = render(HOSTILE)
 assert "<img" not in hostile_page and "alert(6)</script>" not in hostile_page, "can't break out of the JSON block"
-assert hostile_page.count("</script>") == 3, "only DOMPurify, its init and the JSON block close a script"
+assert hostile_page.count('<script nonce="') == 2, "a placeholder in the document is never filled in"
+assert "%(scripts)s %(nonce)s" in hostile_body
 
 # Previews older than a day are removed; newer ones stay.
 old = tempfile.mkstemp(prefix=markdown_preview.PREVIEW_PREFIX, suffix=".html")[1]
@@ -150,8 +191,7 @@ browser = find_browser()
 if browser:
     hostile = shown(browser, hostile_path)
     # Look at real tags and attributes only: escaped text such as "&lt;img/onerror=…&gt;" is harmless.
-    tags = re.findall(r"<[a-zA-Z][^>]*>", hostile)
-    for tag in tags:
+    for tag in re.findall(r"<[a-zA-Z][^>]*>", hostile):
         assert not re.search(r"\son\w+=|\sstyle=|\sname=\"getElementById\"", tag), tag
         assert not re.search(r"\s(href|src)=\"\s*(javascript|data:text|file:)", tag, re.I), tag
         assert not re.match(r"<(script|meta|textarea|style|form)\b", tag, re.I), tag
@@ -162,7 +202,10 @@ if browser:
     assert '<h1 id="user-content-title">' in normal and 'href="#user-content-title"' in normal
     assert 'href="#user-content-fn1"' in normal and 'id="user-content-fn1"' in normal, "footnotes still link"
     assert 'type="checkbox"' in normal, "task-list checkboxes survive"
+    assert 'src="data:image/png;base64,' in normal and 'src="data:image/svg+xml;base64,' in normal, "images embed"
     assert "<svg" in normal, "Mermaid draws after sanitizing"
     print("ok, pygments:", bool(markdown_preview.pygments), "| browser checks: passed")
 else:
     print("ok, pygments:", bool(markdown_preview.pygments), "| browser checks: skipped (no Chrome/Chromium)")
+
+shutil.rmtree(OUTSIDE)

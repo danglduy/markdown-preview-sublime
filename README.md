@@ -7,8 +7,8 @@ Preview the current Markdown buffer in your browser with GitHub styling, rendere
 - Code highlighting with Pygments, installed automatically by Package Control
 - Mermaid diagrams from ```mermaid blocks, drawn by a bundled copy of Mermaid (loaded only when a document has one)
 - GitHub look, following the system light/dark mode, no network requests
-- Relative images and links resolve against the file's folder
-- Output is a private temp file (readable only by you)
+- Relative images are embedded into the page, so the preview never points back at your files (links to other local files don't work in the preview)
+- Output is a single self-contained, private temp file (readable only by you)
 
 ## Requirements
 
@@ -37,6 +37,8 @@ Previewing a Markdown file you didn't write (a README from a cloned repo, say) i
 
 - Scripts in the document never run. The page carries a Content Security Policy that only trusts the plugin's own scripts, using a fresh random nonce per preview.
 - The rendered HTML is cleaned in the browser by a bundled [DOMPurify](https://github.com/cure53/DOMPurify) before it's shown. It uses the browser's own HTML parser, so what it checks is exactly what you see. Like GitHub, it also drops `<style>`, `style=` and form controls, and prefixes ids with `user-content-` so a document can't hijack the page's own functions. Safe HTML such as `<details>` or `<img width>` still renders.
+- The preview never points back at the original file or your home folder: no `<base>` tag, no folder paths and no `file://` addresses. The bundled scripts are inlined, and only the file's name appears, as the tab title.
+- Local images are embedded only if they're image files inside the document's folder or a Sublime project folder that contains it, as VS Code's preview does. A document can't pull in a file such as `~/.ssh/id_rsa` with `../../`, or through a symlink that leads outside.
 - Until DOMPurify has cleaned it, the HTML is only an inert JSON string in the page, so if JavaScript is off or a script fails, the preview stays empty instead of showing raw HTML.
 - Mermaid runs at its strict security level, so diagram labels can't inject HTML or click handlers.
 - Previews are written readable only by you and are deleted after a day.
