@@ -29,6 +29,11 @@
     FORBID_TAGS: ["style", "form", "button", "textarea", "select"],
     FORBID_ATTR: ["style"],
   });
+  // Paper can't follow a link, so printing shows where each one goes: a numbered note after the link and the full
+  // address in a list at the end. Numbers carry on from the document's own footnotes; repeated addresses share one.
+  const printed = new Map();
+  const bare = (url) => url.replace(/^(https?:\/\/|mailto:)/i, "").replace(/\/$/, "");
+  const footnotes = clean.querySelectorAll(".footnote-item").length;
   for (const link of clean.querySelectorAll("a[href]")) {
     const href = link.getAttribute("href");
     if (href.startsWith("#")) {
@@ -39,7 +44,16 @@
       link.setAttribute("target", "_blank");
       link.setAttribute("rel", "noopener noreferrer");
       // Text links only: an image link (a badge, a screenshot) would get a stray arrow beside the picture.
-      if (link.textContent.trim()) link.append(external.cloneNode(true));
+      const text = link.textContent.trim();
+      if (!text) continue;
+      link.append(external.cloneNode(true));
+      // A link that already reads as its address needs no note.
+      if (bare(text) === bare(href)) continue;
+      if (!printed.has(href)) printed.set(href, footnotes + printed.size + 1);
+      const note = document.createElement("sup");
+      note.className = "print-only print-ref";
+      note.textContent = "[" + printed.get(href) + "]";
+      link.after(note);
     }
   }
   for (const anchor of clean.querySelectorAll(".header-anchor")) {
@@ -48,6 +62,21 @@
   for (const image of clean.querySelectorAll("img[src]")) {
     const embedded = images.get(image.getAttribute("src"));
     if (embedded) image.setAttribute("src", embedded);
+  }
+  if (printed.size) {
+    const section = document.createElement("section");
+    section.className = "print-only print-links";
+    const heading = document.createElement("p");
+    heading.textContent = "Links";
+    const list = document.createElement("ol");
+    list.start = footnotes + 1;
+    for (const href of printed.keys()) {
+      const item = document.createElement("li");
+      item.textContent = href;
+      list.append(item);
+    }
+    section.append(heading, list);
+    clean.append(section);
   }
   content.append(clean);
   // A clicked heading link keeps focus (Safari doesn't focus links on click), so its ring stays after scrolling.
