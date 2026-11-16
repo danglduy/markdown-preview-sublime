@@ -88,9 +88,16 @@ SANITIZE_SCRIPT = """<script nonce="%(nonce)s">
     FORBID_TAGS: ["style", "form", "button", "textarea", "select"],
     FORBID_ATTR: ["style"],
   });
-  for (const link of clean.querySelectorAll('a[href^="#"]')) {
-    const target = link.getAttribute("href").slice(1);
-    if (target && !target.startsWith("user-content-")) link.setAttribute("href", "#user-content-" + target);
+  for (const link of clean.querySelectorAll("a[href]")) {
+    const href = link.getAttribute("href");
+    if (href.startsWith("#")) {
+      const target = href.slice(1);
+      if (target && !target.startsWith("user-content-")) link.setAttribute("href", "#user-content-" + target);
+    } else {
+      // Leaving the preview opens a new tab, which gets no handle on this page and no referrer.
+      link.setAttribute("target", "_blank");
+      link.setAttribute("rel", "noopener noreferrer");
+    }
   }
   for (const image of clean.querySelectorAll("img[src]")) {
     const embedded = images.get(image.getAttribute("src"));
@@ -210,6 +217,7 @@ PAGE = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-%(nonce)s'; style-src 'unsafe-inline'; img-src data: https:; media-src https:; font-src data:; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>%(title)s</title>
 <style>

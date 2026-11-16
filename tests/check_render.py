@@ -44,7 +44,7 @@ DOC = os.path.join(DOCS, "readme.md")
 
 SOURCE = """# Title
 
-[jump to title](#title)
+[jump to title](#title) [site](https://example.com) <a href="https://example.org" target="_self" rel="opener">raw</a>
 
 - outer
   - nested with two spaces
@@ -151,6 +151,7 @@ assert "../assets/logo.svg" not in render(SOURCE, folders=())[3], "without a pro
 assert oct(os.stat(path).st_mode & 0o777) == "0o600"
 assert "<h1" not in page, "rendered HTML must not appear in the page as markup"
 csp = re.search(r'http-equiv="Content-Security-Policy" content="([^"]*)"', page).group(1)
+assert '<meta name="referrer" content="no-referrer">' in page
 assert "script-src 'nonce-" in csp and " http:" not in csp and "file:" not in csp and "base-uri 'none'" in csp
 assert page.count('<script nonce="') == 4, "DOMPurify, its init, Mermaid and its init"
 plain_page = render("# No diagrams")[1]
@@ -199,7 +200,11 @@ if browser:
     assert "swallow the rest" in hostile, "a forbidden tag's text stays as plain text"
 
     normal = shown(browser, path)
-    assert '<h1 id="user-content-title">' in normal and 'href="#user-content-title"' in normal
+    assert '<h1 id="user-content-title">' in normal and '<a href="#user-content-title">' in normal, "same tab"
+    # Both links, including the raw one asking for target="_self" rel="opener": new tab, no opener, no referrer.
+    for site in ["https://example.com", "https://example.org"]:
+        link = re.search(r'<a href="%s"[^>]*>' % re.escape(site), normal).group(0)
+        assert 'target="_blank"' in link and 'rel="noopener noreferrer"' in link, link
     assert 'href="#user-content-fn1"' in normal and 'id="user-content-fn1"' in normal, "footnotes still link"
     assert 'type="checkbox"' in normal, "task-list checkboxes survive"
     assert 'src="data:image/png;base64,' in normal and 'src="data:image/svg+xml;base64,' in normal, "images embed"
