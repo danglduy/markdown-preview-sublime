@@ -215,6 +215,9 @@ if browser:
     for site in ["https://example.com", "https://example.org"]:
         link = re.search(r'<a href="%s"[^>]*>' % re.escape(site), normal).group(0)
         assert 'target="_blank"' in link and 'rel="noopener noreferrer"' in link, link
+    for name in ["site", "raw"]:
+        assert re.search(r'>%s<svg class="octicon external-icon"[^>]*aria-hidden="true"><path d="M4\.53' % name, normal), name
+    assert normal.count("external-icon") == 2, "only outbound links get the new-tab arrow"
     assert 'href="#user-content-fn1"' in normal and 'id="user-content-fn1"' in normal, "footnotes still link"
     assert 'type="checkbox"' in normal, "task-list checkboxes survive"
     assert 'src="data:image/png;base64,' in normal and 'src="data:image/svg+xml;base64,' in normal, "images embed"
