@@ -49,6 +49,27 @@ MARKDOWN = (
     .use(anchors_plugin, max_level=6)
 )
 
+MERMAID_JS = pathlib.Path(VENDOR, "mermaid", "mermaid.min.js").as_uri()
+# Loaded only when the document has a diagram; the theme follows the system light/dark mode like the page.
+MERMAID_SCRIPT = """<script src="%s"></script>
+<script>
+mermaid.initialize({ startOnLoad: true, theme: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default" });
+</script>
+""" % html.escape(MERMAID_JS, quote=True)
+
+default_fence = MARKDOWN.renderer.rules["fence"]
+
+
+def render_fence(self, tokens, idx, options, env):
+    """```mermaid blocks become <pre class="mermaid"> for Mermaid to draw; every other fence renders as code."""
+    token = tokens[idx]
+    if token.info.split()[:1] == ["mermaid"]:
+        return '<pre class="mermaid">%s</pre>\n' % html.escape(token.content)
+    return default_fence(tokens, idx, options, env)
+
+
+MARKDOWN.add_render_rule("fence", render_fence)
+
 # ponytail: hand-trimmed GitHub look, swap in the full github-markdown-css if something looks off.
 PAGE = """<!DOCTYPE html>
 <html>
@@ -111,11 +132,12 @@ pre .m, pre .mb, pre .mf, pre .mh, pre .mi, pre .mo, pre .il, pre .nb, pre .bp, 
 pre .nf, pre .fm, pre .nc, pre .nd, pre .nn { color: var(--fn); }
 pre .kt, pre .nv, pre .vc, pre .vg, pre .vi { color: var(--type); }
 pre .nt { color: var(--tag); }
+pre.mermaid { font-size: 100%; text-align: center; background: transparent; }
 </style>
 </head>
 <body>
 %(body)s
-</body>
+%(scripts)s</body>
 </html>
 """
 
@@ -137,7 +159,14 @@ class MarkdownPreviewInBrowserCommand(sublime_plugin.TextCommand):
 
         # str.replace, not %: the CSS is full of literal % signs. Body goes last so its text is never rescanned.
         title = html.escape(os.path.basename(file_name) if file_name else "Untitled")
-        page = PAGE.replace("%(base)s", base).replace("%(title)s", title).replace("%(body)s", MARKDOWN.render(source))
+        body = MARKDOWN.render(source)
+        scripts = MERMAID_SCRIPT if '<pre class="mermaid">' in body else ""
+        page = (
+            PAGE.replace("%(base)s", base)
+            .replace("%(title)s", title)
+            .replace("%(scripts)s", scripts)
+            .replace("%(body)s", body)
+        )
 
         # mkstemp creates the file readable only by the current user.
         fd, path = tempfile.mkstemp(prefix="markdown-preview-", suffix=".html")

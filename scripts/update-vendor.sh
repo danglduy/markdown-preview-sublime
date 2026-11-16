@@ -4,6 +4,9 @@
 # Keep versions that still support Python 3.8: older Sublime Text 4 builds run plugins on it.
 set -eu
 
+# Browser build loaded by the preview page to draw ```mermaid blocks.
+MERMAID_VERSION=12.2.0
+
 # "<pip requirement> <module folder> <dist-info prefix>"
 LIBRARIES="
 markdown-it-py==3.0.0 markdown_it markdown_it_py
@@ -30,6 +33,10 @@ echo "$LIBRARIES" | while read -r requirement module dist; do
   cp -R "$work/unpacked/$module" vendor/
   cp "$work"/unpacked/"$dist"-*.dist-info/LICENSE* "vendor/$module/"
 done
+
+mkdir vendor/mermaid
+curl --silent --fail --location "https://registry.npmjs.org/mermaid/-/mermaid-$MERMAID_VERSION.tgz" | tar -xz -C "$work" package/dist/mermaid.min.js package/LICENSE
+cp "$work/package/dist/mermaid.min.js" "$work/package/LICENSE" vendor/mermaid/
 
 # The command-line tool isn't used by the plugin.
 rm -rf vendor/markdown_it/cli

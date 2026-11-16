@@ -5,6 +5,7 @@ Preview the current Markdown buffer in your browser with GitHub styling, rendere
 - Renders the buffer, so unsaved edits show up
 - GitHub-flavoured Markdown (CommonMark): tables, strikethrough, task lists, footnotes, heading anchors, 2-space nested lists
 - Code highlighting with Pygments, installed automatically by Package Control
+- Mermaid diagrams from ```mermaid blocks, drawn by a bundled copy of Mermaid (loaded only when a document has one)
 - GitHub look, following the system light/dark mode, no network requests
 - Relative images and links resolve against the file's folder
 - Output is a private temp file (readable only by you)
@@ -32,7 +33,7 @@ Open a Markdown file, then Command Palette → **Markdown Preview: Open in Brows
 
 ## Development
 
-`vendor/` holds unmodified copies of markdown-it-py 3.0.0, mdurl 0.1.2 and mdit-py-plugins 0.4.2 (all MIT, licences alongside). These are the last releases that still support the Python 3.8 plugin host of older Sublime Text 4 builds.
+`vendor/` holds unmodified copies of markdown-it-py 3.0.0, mdurl 0.1.2 and mdit-py-plugins 0.4.2, plus Mermaid 12.2.0's browser build (all MIT, licences alongside). The Python libraries are the last releases that still support the Python 3.8 plugin host of older Sublime Text 4 builds.
 
 To update them, change the pinned versions in `scripts/update-vendor.sh` and run it. It rebuilds `vendor/` from PyPI.
 
