@@ -31,6 +31,18 @@ git clone https://github.com/danglduy/markdown-preview-sublime "$HOME/Library/Ap
 
 Open a Markdown file, then Command Palette → **Markdown Preview: Open in Browser**.
 
+## Security
+
+Previewing a Markdown file you didn't write (a README from a cloned repo, say) is safe:
+
+- Scripts in the document never run. The page carries a Content Security Policy that only trusts the plugin's own scripts, using a fresh random nonce per preview.
+- Raw HTML that could run code, redirect, submit forms or restyle the page (`<script>`, `on…=` handlers, `<meta>` refresh, `<iframe>`, `<form>`, `<style>`…) is shown as text, much as GitHub strips it. Safe HTML such as `<details>` or `<img width>` still renders.
+- Mermaid runs at its strict security level, so diagram labels can't inject HTML or click handlers.
+- Previews are written readable only by you and are deleted after a day.
+- `scripts/update-vendor.sh` checks every download against a pinned sha256 before unpacking it.
+
+Remote images still load, as on GitHub, so a document can tell its author's server that you opened it.
+
 ## Development
 
 `vendor/` holds unmodified copies of markdown-it-py 3.0.0, mdurl 0.1.2 and mdit-py-plugins 0.4.2, plus Mermaid 12.2.0's browser build (all MIT, licences alongside). The Python libraries are the last releases that still support the Python 3.8 plugin host of older Sublime Text 4 builds.

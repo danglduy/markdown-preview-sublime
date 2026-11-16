@@ -1,8 +1,13 @@
+import glob
 import html
 import os
 import pathlib
+import re
+import secrets
+import stat
 import sys
 import tempfile
+import time
 import webbrowser
 
 import sublime
@@ -49,13 +54,55 @@ MARKDOWN = (
     .use(anchors_plugin, max_level=6)
 )
 
-MERMAID_JS = pathlib.Path(VENDOR, "mermaid", "mermaid.min.js").as_uri()
+MERMAID_JS = html.escape(pathlib.Path(VENDOR, "mermaid", "mermaid.min.js").as_uri(), quote=True)
 # Loaded only when the document has a diagram; the theme follows the system light/dark mode like the page.
-MERMAID_SCRIPT = """<script src="%s"></script>
-<script>
-mermaid.initialize({ startOnLoad: true, theme: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default" });
+# "strict" makes Mermaid escape HTML in labels and ignore click handlers written in the diagram.
+MERMAID_SCRIPT = """<script nonce="%(nonce)s" src="__MERMAID_JS__"></script>
+<script nonce="%(nonce)s">
+mermaid.initialize({
+  startOnLoad: true,
+  securityLevel: "strict",
+  theme: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default",
+});
 </script>
-""" % html.escape(MERMAID_JS, quote=True)
+""".replace("__MERMAID_JS__", MERMAID_JS)
+
+# Raw HTML stays allowed (READMEs use <details>, <img width>, <p align>), but anything that can run code,
+# redirect, submit or restyle the page is shown as text, like GitHub strips it. The CSP below is the main guard;
+# this catches what CSP can't, such as <meta http-equiv="refresh"> redirects.
+UNSAFE_HTML = re.compile(
+    r"<\s*/?\s*(script|iframe|frame|frameset|object|embed|applet|meta|base|link|form|style|template|svg|math)\b"
+    r"""|[\s/"']on[a-z]+\s*="""
+    r"|(javascript|vbscript)\s*:",
+    re.IGNORECASE,
+)
+
+
+def render_raw_html(self, tokens, idx, options, env):
+    content = tokens[idx].content
+    return html.escape(content) if UNSAFE_HTML.search(content) else content
+
+
+MARKDOWN.add_render_rule("html_block", render_raw_html)
+MARKDOWN.add_render_rule("html_inline", render_raw_html)
+
+# Previews hold the document's text, so don't leave them in the temp folder for good.
+PREVIEW_PREFIX = "markdown-preview-"
+PREVIEW_MAX_AGE = 24 * 60 * 60
+
+
+def remove_old_previews():
+    cutoff = time.time() - PREVIEW_MAX_AGE
+    for path in glob.glob(os.path.join(tempfile.gettempdir(), PREVIEW_PREFIX + "*.html")):
+        try:
+            info = os.lstat(path)
+            # Only plain files we created: never follow a symlink or touch another user's file in a shared /tmp.
+            if not stat.S_ISREG(info.st_mode) or (hasattr(os, "getuid") and info.st_uid != os.getuid()):
+                continue
+            if info.st_mtime < cutoff:
+                os.remove(path)
+        except OSError:
+            pass
 
 default_fence = MARKDOWN.renderer.rules["fence"]
 
@@ -75,6 +122,7 @@ PAGE = """<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-%(nonce)s'; style-src 'unsafe-inline'; img-src file: data: https: http:; media-src file: https: http:; font-src data:; base-uri file:; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 %(base)s<title>%(title)s</title>
 <style>
@@ -161,15 +209,19 @@ class MarkdownPreviewInBrowserCommand(sublime_plugin.TextCommand):
         title = html.escape(os.path.basename(file_name) if file_name else "Untitled")
         body = MARKDOWN.render(source)
         scripts = MERMAID_SCRIPT if '<pre class="mermaid">' in body else ""
+        # A fresh nonce per preview: only our own script tags carry it, so scripts in the document can't run.
+        nonce = secrets.token_urlsafe(16)
         page = (
             PAGE.replace("%(base)s", base)
             .replace("%(title)s", title)
             .replace("%(scripts)s", scripts)
+            .replace("%(nonce)s", nonce)
             .replace("%(body)s", body)
         )
 
-        # mkstemp creates the file readable only by the current user.
-        fd, path = tempfile.mkstemp(prefix="markdown-preview-", suffix=".html")
+        remove_old_previews()
+        # mkstemp creates the file readable only by the current user, with a random name nobody can pre-create.
+        fd, path = tempfile.mkstemp(prefix=PREVIEW_PREFIX, suffix=".html")
         with os.fdopen(fd, "w", encoding="utf-8") as out:
             out.write(page)
         webbrowser.open(pathlib.Path(path).as_uri())
