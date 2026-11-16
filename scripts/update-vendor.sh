@@ -1,7 +1,7 @@
 #!/bin/sh
 # Rebuild vendor/ from the pinned releases below.
 # To update: change a version and its sha256 (from the PyPI file list, or `shasum -a 256` on the npm tarball
-# checked against `npm view mermaid@<version> dist.integrity`), run this, then run tests/check_render.py.
+# checked against `npm view <package>@<version> dist.integrity`), run this, then run tests/check_render.py.
 # Keep Python libraries on versions that still support Python 3.8: older Sublime Text 4 builds run plugins on it.
 set -eu
 
@@ -15,6 +15,10 @@ mdit-py-plugins==0.4.2 mdit_py_plugins mdit_py_plugins 0c673c3f889399a33b95e88d2
 # Browser build loaded by the preview page to draw ```mermaid blocks.
 MERMAID_VERSION=12.2.0
 MERMAID_SHA256=071914164d0f6d53e5c26a10a220230d4ae8d37ed0f2263fbf072266f0af3a0a
+
+# Sanitizes the rendered HTML in the preview page before it's shown.
+DOMPURIFY_VERSION=3.4.17
+DOMPURIFY_SHA256=056cbdae276897208b88c21d1d779adfa09ad7be488a2f510a28e900d3bbffe7
 
 cd "$(dirname "$0")/.."
 work=$(mktemp -d)
@@ -41,16 +45,23 @@ done
 curl --silent --fail --location --proto '=https' --output "$work/mermaid.tgz" \
   "https://registry.npmjs.org/mermaid/-/mermaid-$MERMAID_VERSION.tgz"
 verify "$work/mermaid.tgz" "$MERMAID_SHA256"
-tar -xzf "$work/mermaid.tgz" -C "$work" package/dist/mermaid.min.js package/LICENSE
+mkdir "$work/mermaid" "$work/dompurify"
+tar -xzf "$work/mermaid.tgz" -C "$work/mermaid" package/dist/mermaid.min.js package/LICENSE
+
+curl --silent --fail --location --proto '=https' --output "$work/dompurify.tgz" \
+  "https://registry.npmjs.org/dompurify/-/dompurify-$DOMPURIFY_VERSION.tgz"
+verify "$work/dompurify.tgz" "$DOMPURIFY_SHA256"
+tar -xzf "$work/dompurify.tgz" -C "$work/dompurify" package/dist/purify.min.js package/LICENSE package/LICENSE-MPL
 
 rm -rf vendor
-mkdir -p vendor/mermaid
+mkdir -p vendor/mermaid vendor/dompurify
 echo "$LIBRARIES" | while read -r requirement module dist sha256; do
   [ -n "$requirement" ] || continue
   cp -R "$work/unpacked/$module" vendor/
   cp "$work"/unpacked/"$dist"-*.dist-info/LICENSE* "vendor/$module/"
 done
-cp "$work/package/dist/mermaid.min.js" "$work/package/LICENSE" vendor/mermaid/
+cp "$work/mermaid/package/dist/mermaid.min.js" "$work/mermaid/package/LICENSE" vendor/mermaid/
+cp "$work/dompurify/package/dist/purify.min.js" "$work/dompurify/package/LICENSE" "$work/dompurify/package/LICENSE-MPL" vendor/dompurify/
 
 # The command-line tool isn't used by the plugin.
 rm -rf vendor/markdown_it/cli

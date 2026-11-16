@@ -1,8 +1,8 @@
 import glob
 import html
 import os
+import json
 import pathlib
-import re
 import secrets
 import stat
 import sys
@@ -54,7 +54,37 @@ MARKDOWN = (
     .use(anchors_plugin, max_level=6)
 )
 
-MERMAID_JS = html.escape(pathlib.Path(VENDOR, "mermaid", "mermaid.min.js").as_uri(), quote=True)
+def vendor_uri(*parts):
+    return html.escape(pathlib.Path(VENDOR, *parts).as_uri(), quote=True)
+
+
+# Raw HTML in the document stays allowed (READMEs use <details>, <img width>, <p align>), so the rendered HTML is
+# never written into the page as markup. It goes in as an inert JSON string, and this script cleans it with
+# DOMPurify, using the browser's own parser, before anything is shown. If the script can't run, the page stays empty.
+#
+# Beyond DOMPurify's defaults, like GitHub: no <style> or style= (no overlays or CSS beacons), no form controls
+# except task-list checkboxes, and every id/name gets a "user-content-" prefix so the document can't replace
+# page properties our scripts rely on (DOM clobbering). In-page links are pointed at the prefixed ids to match.
+SANITIZE_SCRIPT = """<script nonce="%(nonce)s" src="__PURIFY_JS__"></script>
+<script nonce="%(nonce)s">
+(() => {
+  const content = document.getElementById("content");
+  const source = document.getElementById("source");
+  const clean = DOMPurify.sanitize(JSON.parse(source.textContent), {
+    RETURN_DOM_FRAGMENT: true,
+    SANITIZE_NAMED_PROPS: true,
+    FORBID_TAGS: ["style", "form", "button", "textarea", "select"],
+    FORBID_ATTR: ["style"],
+  });
+  for (const link of clean.querySelectorAll('a[href^="#"]')) {
+    const target = link.getAttribute("href").slice(1);
+    if (target && !target.startsWith("user-content-")) link.setAttribute("href", "#user-content-" + target);
+  }
+  content.append(clean);
+})();
+</script>
+""".replace("__PURIFY_JS__", vendor_uri("dompurify", "purify.min.js"))
+
 # Loaded only when the document has a diagram; the theme follows the system light/dark mode like the page.
 # "strict" makes Mermaid escape HTML in labels and ignore click handlers written in the diagram.
 MERMAID_SCRIPT = """<script nonce="%(nonce)s" src="__MERMAID_JS__"></script>
@@ -65,26 +95,13 @@ mermaid.initialize({
   theme: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default",
 });
 </script>
-""".replace("__MERMAID_JS__", MERMAID_JS)
-
-# Raw HTML stays allowed (READMEs use <details>, <img width>, <p align>), but anything that can run code,
-# redirect, submit or restyle the page is shown as text, like GitHub strips it. The CSP below is the main guard;
-# this catches what CSP can't, such as <meta http-equiv="refresh"> redirects.
-UNSAFE_HTML = re.compile(
-    r"<\s*/?\s*(script|iframe|frame|frameset|object|embed|applet|meta|base|link|form|style|template|svg|math)\b"
-    r"""|[\s/"']on[a-z]+\s*="""
-    r"|(javascript|vbscript)\s*:",
-    re.IGNORECASE,
-)
+""".replace("__MERMAID_JS__", vendor_uri("mermaid", "mermaid.min.js"))
 
 
-def render_raw_html(self, tokens, idx, options, env):
-    content = tokens[idx].content
-    return html.escape(content) if UNSAFE_HTML.search(content) else content
-
-
-MARKDOWN.add_render_rule("html_block", render_raw_html)
-MARKDOWN.add_render_rule("html_inline", render_raw_html)
+def inert_json(text):
+    """JSON for a <script type="application/json"> block. Escaping < > & means the text can never close the
+    block or start markup, so the browser only ever sees it as a string."""
+    return json.dumps(text).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 # Previews hold the document's text, so don't leave them in the temp folder for good.
 PREVIEW_PREFIX = "markdown-preview-"
@@ -122,7 +139,7 @@ PAGE = """<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-%(nonce)s'; style-src 'unsafe-inline'; img-src file: data: https: http:; media-src file: https: http:; font-src data:; base-uri file:; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-%(nonce)s'; style-src 'unsafe-inline'; img-src file: data: https:; media-src file: https:; font-src data:; base-uri file:; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 %(base)s<title>%(title)s</title>
 <style>
@@ -184,7 +201,9 @@ pre.mermaid { font-size: 100%; text-align: center; background: transparent; }
 </style>
 </head>
 <body>
-%(body)s
+<main id="content"></main>
+<noscript>This preview needs JavaScript: it cleans the document's HTML in the browser before showing it.</noscript>
+<script type="application/json" id="source">%(body)s</script>
 %(scripts)s</body>
 </html>
 """
@@ -208,7 +227,8 @@ class MarkdownPreviewInBrowserCommand(sublime_plugin.TextCommand):
         # str.replace, not %: the CSS is full of literal % signs. Body goes last so its text is never rescanned.
         title = html.escape(os.path.basename(file_name) if file_name else "Untitled")
         body = MARKDOWN.render(source)
-        scripts = MERMAID_SCRIPT if '<pre class="mermaid">' in body else ""
+        # Sanitize first: Mermaid must only ever see the cleaned page.
+        scripts = SANITIZE_SCRIPT + (MERMAID_SCRIPT if '<pre class="mermaid">' in body else "")
         # A fresh nonce per preview: only our own script tags carry it, so scripts in the document can't run.
         nonce = secrets.token_urlsafe(16)
         page = (
@@ -216,7 +236,7 @@ class MarkdownPreviewInBrowserCommand(sublime_plugin.TextCommand):
             .replace("%(title)s", title)
             .replace("%(scripts)s", scripts)
             .replace("%(nonce)s", nonce)
-            .replace("%(body)s", body)
+            .replace("%(body)s", inert_json(body))
         )
 
         remove_old_previews()

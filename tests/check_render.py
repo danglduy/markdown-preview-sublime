@@ -1,5 +1,13 @@
-"""Run with plain Python from the repo root: python3 tests/check_render.py (Sublime only loads top-level .py files)."""
+"""Run with plain Python from the repo root: python3 tests/check_render.py (Sublime only loads top-level .py files).
+
+The Python part checks rendering and the page structure. Sanitizing happens in the browser, so the second part
+opens previews in headless Chrome/Chromium and checks the DOM it actually shows; it's skipped if none is found.
+"""
+import json
 import os
+import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -12,6 +20,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import markdown_preview  # noqa: E402
 
 SOURCE = """# Title
+
+[jump to title](#title)
 
 - outer
   - nested with two spaces
@@ -37,6 +47,24 @@ graph LR
 [^1]: The note.
 """
 
+HOSTILE = """<script>alert(1)</script>
+
+hi <img/onerror="alert(2)" src=x> <img src="x"onerror="alert(3)"> [a](javascript:alert(4))
+<a href="javascript&#58;alert(5)">encoded</a> <a href="data:text/html;base64,PHNjcmlwdD4=">data</a>
+<a href="file:///etc/passwd">local</a> <img name="getElementById" src="a.png">
+
+<div style="position:fixed;inset:0">overlay</div>
+
+<meta http-equiv="refresh" content="0;url=https://example.com">
+
+<details><summary>Kept</summary>safe html</details>
+
+</script><script>alert(6)</script>
+
+<textarea>
+swallow the rest
+"""
+
 
 class FakeView:
     def __init__(self, source):
@@ -53,42 +81,44 @@ class FakeView:
 
 
 def render(source):
+    """Return the preview's path, the page as written, and the rendered HTML held in its JSON block."""
     opened = []
     webbrowser.open = opened.append
     command = markdown_preview.MarkdownPreviewInBrowserCommand()
     command.view = FakeView(source)
     command.run(None)
     path = opened[0][len("file://"):]
-    return path, open(path, encoding="utf-8").read()
+    page = open(path, encoding="utf-8").read()
+    data = re.search(r'<script type="application/json" id="source">(.*?)</script>', page, re.S).group(1)
+    return path, page, json.loads(data)
 
 
-path, page = render(SOURCE)
+# Rendering.
+path, page, body = render(SOURCE)
 assert '<base href="file:///tmp/my%20notes/">' in page
 assert "<title>readme.md</title>" in page
-assert '<h1 id="title">' in page
-assert page.count("<ul") >= 2, "two-space nested list should nest"
-assert "<table>" in page and "<s>gone</s>" in page
-assert 'class="task-list-item-checkbox"' in page and 'class="footnotes"' in page
-assert 'src="img/pic.png"' in page
+assert '<h1 id="title">' in body
+assert body.count("<ul") >= 2, "two-space nested list should nest"
+assert "<table>" in body and "<s>gone</s>" in body
+assert 'class="task-list-item-checkbox"' in body and 'class="footnotes"' in body
+assert 'src="img/pic.png"' in body
+assert '<pre class="mermaid">graph LR\n  A[Start] --&gt; B{Done?}\n</pre>' in body
+if markdown_preview.pygments:
+    assert '<span class="nb">puts</span>' in body, "code should be coloured"
+
+# Page structure: the document is only ever an inert string, and only our scripts carry the nonce.
 assert oct(os.stat(path).st_mode & 0o777) == "0o600"
-assert '<pre class="mermaid">graph LR\n  A[Start] --&gt; B{Done?}\n</pre>' in page
+assert "<h1" not in page, "rendered HTML must not appear in the page as markup"
+assert "Content-Security-Policy" in page and "script-src 'nonce-" in page and " http:" not in page
+assert page.count('<script nonce="') == 4, "DOMPurify, its init, Mermaid and its init"
+assert "purify.min.js" in page and os.path.exists(markdown_preview.VENDOR + "/dompurify/purify.min.js")
 assert "mermaid.min.js" in page and os.path.exists(markdown_preview.VENDOR + "/mermaid/mermaid.min.js")
-assert "mermaid.min.js" not in render("# No diagrams")[1], "Mermaid should load only when needed"
-# Security: scripts in the document must not run, and the page must only trust its own nonce.
-HOSTILE = """<script>alert(1)</script>
+plain_page = render("# No diagrams")[1]
+assert "mermaid.min.js" not in plain_page and plain_page.count('<script nonce="') == 2, "Mermaid only when needed"
 
-hi <img/onerror="alert(2)" src=x> <img src="x"onerror="alert(3)"> [a](javascript:alert(4))
-
-<meta http-equiv="refresh" content="0;url=https://example.com">
-
-<details><summary>Kept</summary>safe html</details>
-"""
-hostile = render(HOSTILE)[1]
-for unsafe in ["<script>alert", "<img/onerror", '"onerror=', '<meta http-equiv="refresh', 'href="javascript:']:
-    assert unsafe not in hostile, unsafe
-assert "<details><summary>Kept</summary>" in hostile, "safe HTML should still render"
-assert "Content-Security-Policy" in hostile and "script-src 'nonce-" in hostile
-assert page.count('<script nonce="') == 2, "only Mermaid and its init script should carry the nonce"
+hostile_path, hostile_page, _ = render(HOSTILE)
+assert "<img" not in hostile_page and "alert(6)</script>" not in hostile_page, "can't break out of the JSON block"
+assert hostile_page.count("</script>") == 3, "only DOMPurify, its init and the JSON block close a script"
 
 # Previews older than a day are removed; newer ones stay.
 old = tempfile.mkstemp(prefix=markdown_preview.PREVIEW_PREFIX, suffix=".html")[1]
@@ -96,6 +126,43 @@ os.utime(old, (time.time() - 2 * markdown_preview.PREVIEW_MAX_AGE,) * 2)
 render("# again")
 assert not os.path.exists(old) and os.path.exists(path)
 
-if markdown_preview.pygments:
-    assert '<span class="nb">puts</span>' in page, "code should be coloured"
-print("ok, pygments:", bool(markdown_preview.pygments), path)
+
+# Sanitizing, as the browser shows it.
+def find_browser():
+    mac = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    if os.path.exists(mac):
+        return mac
+    return next(filter(None, map(shutil.which, ["google-chrome", "chromium", "chromium-browser"])), None)
+
+
+def shown(browser, preview_path):
+    """The <main> content after the page's scripts ran."""
+    dom = subprocess.run(
+        [browser, "--headless", "--disable-gpu", "--virtual-time-budget=8000", "--dump-dom", "file://" + preview_path],
+        capture_output=True, text=True, timeout=60,
+    ).stdout
+    main = re.search(r'<main id="content">(.*?)</main>', dom, re.S)
+    assert main, "preview content missing: the page was redirected or replaced (e.g. by an unsanitized <meta> refresh)"
+    return main.group(1)
+
+
+browser = find_browser()
+if browser:
+    hostile = shown(browser, hostile_path)
+    # Look at real tags and attributes only: escaped text such as "&lt;img/onerror=…&gt;" is harmless.
+    tags = re.findall(r"<[a-zA-Z][^>]*>", hostile)
+    for tag in tags:
+        assert not re.search(r"\son\w+=|\sstyle=|\sname=\"getElementById\"", tag), tag
+        assert not re.search(r"\s(href|src)=\"\s*(javascript|data:text|file:)", tag, re.I), tag
+        assert not re.match(r"<(script|meta|textarea|style|form)\b", tag, re.I), tag
+    assert "<details><summary>Kept</summary>safe html</details>" in hostile, "safe HTML should still render"
+    assert "swallow the rest" in hostile, "a forbidden tag's text stays as plain text"
+
+    normal = shown(browser, path)
+    assert '<h1 id="user-content-title">' in normal and 'href="#user-content-title"' in normal
+    assert 'href="#user-content-fn1"' in normal and 'id="user-content-fn1"' in normal, "footnotes still link"
+    assert 'type="checkbox"' in normal, "task-list checkboxes survive"
+    assert "<svg" in normal, "Mermaid draws after sanitizing"
+    print("ok, pygments:", bool(markdown_preview.pygments), "| browser checks: passed")
+else:
+    print("ok, pygments:", bool(markdown_preview.pygments), "| browser checks: skipped (no Chrome/Chromium)")

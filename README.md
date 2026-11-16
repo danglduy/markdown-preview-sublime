@@ -36,17 +36,18 @@ Open a Markdown file, then Command Palette → **Markdown Preview: Open in Brows
 Previewing a Markdown file you didn't write (a README from a cloned repo, say) is safe:
 
 - Scripts in the document never run. The page carries a Content Security Policy that only trusts the plugin's own scripts, using a fresh random nonce per preview.
-- Raw HTML that could run code, redirect, submit forms or restyle the page (`<script>`, `on…=` handlers, `<meta>` refresh, `<iframe>`, `<form>`, `<style>`…) is shown as text, much as GitHub strips it. Safe HTML such as `<details>` or `<img width>` still renders.
+- The rendered HTML is cleaned in the browser by a bundled [DOMPurify](https://github.com/cure53/DOMPurify) before it's shown. It uses the browser's own HTML parser, so what it checks is exactly what you see. Like GitHub, it also drops `<style>`, `style=` and form controls, and prefixes ids with `user-content-` so a document can't hijack the page's own functions. Safe HTML such as `<details>` or `<img width>` still renders.
+- Until DOMPurify has cleaned it, the HTML is only an inert JSON string in the page, so if JavaScript is off or a script fails, the preview stays empty instead of showing raw HTML.
 - Mermaid runs at its strict security level, so diagram labels can't inject HTML or click handlers.
 - Previews are written readable only by you and are deleted after a day.
 - `scripts/update-vendor.sh` checks every download against a pinned sha256 before unpacking it.
 
-Remote images still load, as on GitHub, so a document can tell its author's server that you opened it.
+Remote images load over `https` only, as in VS Code's strict preview. They still let a document's author see that you opened it; GitHub avoids that by fetching images through its own proxy.
 
 ## Development
 
-`vendor/` holds unmodified copies of markdown-it-py 3.0.0, mdurl 0.1.2 and mdit-py-plugins 0.4.2, plus Mermaid 12.2.0's browser build (all MIT, licences alongside). The Python libraries are the last releases that still support the Python 3.8 plugin host of older Sublime Text 4 builds.
+`vendor/` holds unmodified copies of markdown-it-py 3.0.0, mdurl 0.1.2 and mdit-py-plugins 0.4.2, plus the browser builds of Mermaid 12.2.0 (MIT) and DOMPurify 3.4.17 (MPL-2.0 or Apache-2.0), licences alongside. The Python libraries are the last releases that still support the Python 3.8 plugin host of older Sublime Text 4 builds.
 
 To update them, change the pinned versions in `scripts/update-vendor.sh` and run it. It rebuilds `vendor/` from PyPI.
 
-Check rendering outside Sublime with `python3 tests/check_render.py`.
+Check rendering outside Sublime with `python3 tests/check_render.py`. With Chrome or Chromium installed, it also opens hostile documents headlessly and checks what the browser actually shows.
