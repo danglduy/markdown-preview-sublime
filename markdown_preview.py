@@ -1,16 +1,53 @@
 import html
 import os
 import pathlib
-import shutil
-import subprocess
+import sys
 import tempfile
 import webbrowser
 
 import sublime
 import sublime_plugin
 
-# GUI-launched Sublime on macOS doesn't inherit the shell PATH, so look in the usual spots too.
-PANDOC_PATHS = ["/opt/homebrew/bin/pandoc", "/usr/local/bin/pandoc", "/usr/bin/pandoc"]
+# The vendored libraries import each other by top-level name (markdown_it, mdurl), so their folder must be on sys.path.
+VENDOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor")
+if VENDOR not in sys.path:
+    sys.path.append(VENDOR)
+
+from markdown_it import MarkdownIt  # noqa: E402
+from mdit_py_plugins.anchors import anchors_plugin  # noqa: E402
+from mdit_py_plugins.footnote import footnote_plugin  # noqa: E402
+from mdit_py_plugins.tasklists import tasklists_plugin  # noqa: E402
+
+try:
+    # Installed by Package Control from dependencies.json. Without it, code blocks render uncoloured.
+    import pygments
+    from pygments.formatters import HtmlFormatter
+    from pygments.lexers import get_lexer_by_name
+    from pygments.util import ClassNotFound
+except ImportError:
+    pygments = None
+
+
+def highlight_code(code, lang, attrs):
+    """Return coloured spans for markdown-it to wrap in <pre><code>, or "" to fall back to plain escaped text."""
+    if not pygments or not lang:
+        return ""
+    try:
+        lexer = get_lexer_by_name(lang)
+    except ClassNotFound:
+        return ""
+    return pygments.highlight(code, lexer, HtmlFormatter(nowrap=True))
+
+
+# GitHub-flavoured: CommonMark plus tables, strikethrough, task lists, footnotes and heading anchors.
+# ponytail: no bare-URL autolinking, vendor linkify-it-py + uc-micro-py and enable "linkify" if it's missed.
+MARKDOWN = (
+    MarkdownIt("commonmark", {"highlight": highlight_code})
+    .enable(["table", "strikethrough"])
+    .use(tasklists_plugin)
+    .use(footnote_plugin)
+    .use(anchors_plugin, max_level=6)
+)
 
 # ponytail: hand-trimmed GitHub look, swap in the full github-markdown-css if something looks off.
 PAGE = """<!DOCTYPE html>
@@ -23,13 +60,13 @@ PAGE = """<!DOCTYPE html>
 :root {
   --fg: #1f2328; --muted: #59636e; --bg: #ffffff; --border: #d1d9e0; --code-bg: #f6f8fa;
   --link: #0969da; --row-alt: #f6f8fa;
-  --kw: #cf222e; --str: #0a3069; --com: #59636e; --num: #0550ae; --fn: #6639ba; --type: #953800;
+  --kw: #cf222e; --str: #0a3069; --com: #59636e; --num: #0550ae; --fn: #6639ba; --type: #953800; --tag: #116329;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --fg: #f0f6fc; --muted: #9198a1; --bg: #0d1117; --border: #3d444d; --code-bg: #151b23;
     --link: #4493f8; --row-alt: #151b23;
-    --kw: #ff7b72; --str: #a5d6ff; --com: #9198a1; --num: #79c0ff; --fn: #d2a8ff; --type: #ffa657;
+    --kw: #ff7b72; --str: #a5d6ff; --com: #9198a1; --num: #79c0ff; --fn: #d2a8ff; --type: #ffa657; --tag: #7ee787;
   }
 }
 html { background: var(--bg); }
@@ -52,7 +89,8 @@ h6 { font-size: .85em; color: var(--muted); }
 p, blockquote, ul, ol, dl, table, pre, details { margin: 0 0 16px; }
 ul, ol { padding-left: 2em; }
 li + li { margin-top: .25em; }
-ul.task-list { list-style: none; padding-left: 1em; }
+.task-list-item { list-style: none; }
+.task-list-item-checkbox { margin: 0 .2em .25em -1.4em; vertical-align: middle; }
 blockquote { padding: 0 1em; color: var(--muted); border-left: .25em solid var(--border); }
 hr { height: .25em; margin: 24px 0; padding: 0; border: 0; background: var(--border); }
 img { max-width: 100%; }
@@ -60,17 +98,19 @@ code, pre { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consola
 code { padding: .2em .4em; border-radius: 6px; background: var(--code-bg); }
 pre { padding: 16px; overflow: auto; line-height: 1.45; border-radius: 6px; background: var(--code-bg); }
 pre code { padding: 0; font-size: 100%; background: transparent; }
-pre code span a { display: none; }
 table { display: block; width: max-content; max-width: 100%; overflow: auto; border-collapse: collapse; }
 th, td { padding: 6px 13px; border: 1px solid var(--border); }
 th { font-weight: 600; }
 tr:nth-child(2n) { background: var(--row-alt); }
-.kw, .cf, .im, .op { color: var(--kw); }
-.st, .ch, .ss, .vs, .sc { color: var(--str); }
-.co, .do, .an, .cv, .in { color: var(--com); }
-.dv, .bn, .fl, .cn, .bu { color: var(--num); }
-.fu, .at, .ex { color: var(--fn); }
-.dt, .va, .pp { color: var(--type); }
+.footnotes-sep { display: none; }
+.footnotes { margin-top: 32px; padding-top: 16px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); }
+pre .k, pre .kc, pre .kd, pre .kn, pre .kp, pre .kr, pre .ow, pre .o { color: var(--kw); }
+pre .s, pre .s1, pre .s2, pre .sa, pre .sb, pre .sc, pre .sd, pre .se, pre .sh, pre .si, pre .sr, pre .ss, pre .sx { color: var(--str); }
+pre .c, pre .c1, pre .ch, pre .cm, pre .cp, pre .cpf, pre .cs { color: var(--com); }
+pre .m, pre .mb, pre .mf, pre .mh, pre .mi, pre .mo, pre .il, pre .nb, pre .bp, pre .no, pre .na { color: var(--num); }
+pre .nf, pre .fm, pre .nc, pre .nd, pre .nn { color: var(--fn); }
+pre .kt, pre .nv, pre .vc, pre .vg, pre .vi { color: var(--type); }
+pre .nt { color: var(--tag); }
 </style>
 </head>
 <body>
@@ -80,33 +120,14 @@ tr:nth-child(2n) { background: var(--row-alt); }
 """
 
 
-def find_pandoc():
-    return shutil.which("pandoc") or next((p for p in PANDOC_PATHS if os.path.exists(p)), None)
-
-
 class MarkdownPreviewInBrowserCommand(sublime_plugin.TextCommand):
     def is_visible(self):
         return self.view.match_selector(0, "text.html.markdown")
 
     def run(self, edit):
-        pandoc = find_pandoc()
-        if not pandoc:
-            sublime.error_message("Markdown Preview: pandoc not found (brew install pandoc).")
-            return
-
         file_name = self.view.file_name()
         # Read the buffer, not the file, so unsaved edits show up.
         source = self.view.substr(sublime.Region(0, self.view.size()))
-
-        # No -s: pandoc's standalone page always forces its own styles, so wrap the fragment ourselves.
-        result = subprocess.run(
-            [pandoc, "-f", "gfm", "-t", "html5"],
-            input=source.encode("utf-8"),
-            capture_output=True,
-        )
-        if result.returncode != 0:
-            sublime.error_message("Markdown Preview: pandoc failed\n\n" + result.stderr.decode("utf-8", "replace"))
-            return
 
         base = ""
         if file_name:
@@ -116,11 +137,7 @@ class MarkdownPreviewInBrowserCommand(sublime_plugin.TextCommand):
 
         # str.replace, not %: the CSS is full of literal % signs. Body goes last so its text is never rescanned.
         title = html.escape(os.path.basename(file_name) if file_name else "Untitled")
-        page = (
-            PAGE.replace("%(base)s", base)
-            .replace("%(title)s", title)
-            .replace("%(body)s", result.stdout.decode("utf-8"))
-        )
+        page = PAGE.replace("%(base)s", base).replace("%(title)s", title).replace("%(body)s", MARKDOWN.render(source))
 
         # mkstemp creates the file readable only by the current user.
         fd, path = tempfile.mkstemp(prefix="markdown-preview-", suffix=".html")
