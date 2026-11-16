@@ -34,4 +34,6 @@ Open a Markdown file, then Command Palette → **Markdown Preview: Open in Brows
 
 `vendor/` holds unmodified copies of markdown-it-py 3.0.0, mdurl 0.1.2 and mdit-py-plugins 0.4.2 (all MIT, licences alongside). These are the last releases that still support the Python 3.8 plugin host of older Sublime Text 4 builds.
 
+To update them, change the pinned versions in `scripts/update-vendor.sh` and run it. It rebuilds `vendor/` from PyPI.
+
 Check rendering outside Sublime with `python3 tests/check_render.py`.
