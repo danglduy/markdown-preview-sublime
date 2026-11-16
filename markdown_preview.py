@@ -48,7 +48,17 @@ def highlight_code(code, lang, attrs):
     return pygments.highlight(code, lexer, HtmlFormatter(nowrap=True))
 
 
-# GitHub-flavoured: CommonMark plus tables, strikethrough, task lists, footnotes, and heading ids with a "#" link
+# GitHub's "link" octicon, shown beside each heading on hover. aria-hidden: the link gets a readable label instead.
+LINK_ICON = (
+    '<svg class="octicon octicon-link" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="'
+    "m7.775 3.275 1.25-1.25a3.5 3.5 0 1 1 4.95 4.95l-2.5 2.5a3.5 3.5 0 0 1-4.95 0 .751.751 0 0 1 .018-1.042.751.751"
+    " 0 0 1 1.042-.018 1.998 1.998 0 0 0 2.83 0l2.5-2.5a2.002 2.002 0 0 0-2.83-2.83l-1.25 1.25a.751.751 0 0 1-1.042"
+    "-.018.751.751 0 0 1-.018-1.042Zm-4.69 9.64a1.998 1.998 0 0 0 2.83 0l1.25-1.25a.751.751 0 0 1 1.042.018.751.751"
+    " 0 0 1 .018 1.042l-1.25 1.25a3.5 3.5 0 1 1-4.95-4.95l2.5-2.5a3.5 3.5 0 0 1 4.95 0 .751.751 0 0 1-.018 1.042.751"
+    '.751 0 0 1-1.042.018 1.998 1.998 0 0 0-2.83 0l-2.5 2.5a1.998 1.998 0 0 0 0 2.83Z"></path></svg>'
+)
+
+# GitHub-flavoured: CommonMark plus tables, strikethrough, task lists, footnotes, and heading ids with a link
 # to each heading, shown in the margin on hover like GitHub's.
 # Bare URLs are not autolinked: that needs linkify-it-py and uc-micro-py vendored and the "linkify" rule enabled.
 MARKDOWN = (
@@ -56,7 +66,7 @@ MARKDOWN = (
     .enable(["table", "strikethrough"])
     .use(tasklists_plugin)
     .use(footnote_plugin)
-    .use(anchors_plugin, max_level=6, permalink=True, permalinkSymbol="#", permalinkBefore=True, permalinkSpace=False)
+    .use(anchors_plugin, max_level=6, permalink=True, permalinkSymbol=LINK_ICON, permalinkBefore=True, permalinkSpace=False)
 )
 
 @functools.lru_cache(maxsize=None)
@@ -100,11 +110,21 @@ SANITIZE_SCRIPT = """<script nonce="%(nonce)s">
       link.setAttribute("rel", "noopener noreferrer");
     }
   }
+  for (const anchor of clean.querySelectorAll(".header-anchor")) {
+    anchor.setAttribute("aria-label", "Link to " + anchor.parentElement.textContent.trim());
+  }
   for (const image of clean.querySelectorAll("img[src]")) {
     const embedded = images.get(image.getAttribute("src"));
     if (embedded) image.setAttribute("src", embedded);
   }
   content.append(clean);
+  // A clicked heading link keeps focus (Safari doesn't focus links on click), so its ring stays after scrolling.
+  content.addEventListener("click", (event) => {
+    const anchor = event.target.closest(".header-anchor");
+    if (!anchor) return;
+    anchor.focus({ preventScroll: true });
+    requestAnimationFrame(() => anchor.focus({ preventScroll: true }));
+  });
 })();
 </script>
 """
@@ -251,20 +271,24 @@ h3 { font-size: 1.25em; }
 h4 { font-size: 1em; }
 h5 { font-size: .875em; }
 h6 { font-size: .85em; color: var(--muted); }
+html { scroll-behavior: smooth; }
+/* Jumping to a heading or footnote lands a little below the window's top edge, not flush against it. */
+main [id] { scroll-margin-top: 24px; }
 h1, h2, h3, h4, h5, h6 { position: relative; }
-/* The # sits in a 32px strip of the left margin, centred on the heading line at a fixed size like GitHub's link
-   icon. Hovering the heading or that strip fades it in. */
+/* The icon sits in a 32px strip of the left margin that touches the heading, so moving between them never leaves
+   the hover area. It fades in at once and out after a short pause, so a quick pass never blinks. */
 .header-anchor {
   position: absolute; top: 0; bottom: 0; left: -32px; width: 32px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 18px; font-weight: 500; line-height: 1; color: var(--muted); text-decoration: none;
-  opacity: 0; transition: opacity .2s ease, color .2s ease;
+  color: var(--fg); opacity: 0; transition: opacity .2s ease .15s;
 }
+.header-anchor svg { fill: currentColor; }
 h1:hover .header-anchor, h2:hover .header-anchor, h3:hover .header-anchor, h4:hover .header-anchor,
-h5:hover .header-anchor, h6:hover .header-anchor, .header-anchor:focus-visible { opacity: 1; }
-.header-anchor:hover { color: var(--link); text-decoration: none; }
-@media (max-width: 767px) { .header-anchor { left: -16px; width: 16px; } }
-@media (prefers-reduced-motion: reduce) { .header-anchor { transition: none; } }
+h5:hover .header-anchor, h6:hover .header-anchor, .header-anchor:focus { opacity: 1; transition-delay: 0s; }
+/* Show the browser's own focus ring even after a mouse click, so the clicked link stays marked after scrolling. */
+.header-anchor:focus { outline: auto; outline-color: -webkit-focus-ring-color; }
+@media (max-width: 767px) { .header-anchor { left: -20px; width: 20px; } }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .header-anchor { transition: none; } }
 p, blockquote, ul, ol, dl, table, pre, details { margin: 0 0 16px; }
 ul, ol { padding-left: 2em; }
 li + li { margin-top: .25em; }

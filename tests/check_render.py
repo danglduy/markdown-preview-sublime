@@ -128,7 +128,7 @@ def render(source, folders=(PROJECT,)):
 # Rendering.
 path, page, body, images = render(SOURCE)
 assert "<title>readme.md</title>" in page
-assert '<h1 id="title"><a class="header-anchor" href="#title">#</a>Title</h1>' in body
+assert '<h1 id="title"><a class="header-anchor" href="#title"><svg class="octicon octicon-link"' in body
 assert body.count("<ul") >= 2, "two-space nested list should nest"
 assert "<table>" in body and "<s>gone</s>" in body
 assert 'class="task-list-item-checkbox"' in body and 'class="footnotes"' in body
@@ -200,7 +200,8 @@ if browser:
     assert "swallow the rest" in hostile, "a forbidden tag's text stays as plain text"
 
     normal = shown(browser, path)
-    assert '<h1 id="user-content-title"><a class="header-anchor" href="#user-content-title">#</a>' in normal
+    anchor = '<a class="header-anchor" href="#user-content-title" aria-label="Link to Title"><svg class="octicon'
+    assert '<h1 id="user-content-title">' + anchor in normal and '<path d="m7.775' in normal, "GitHub's link icon"
     assert '<a href="#user-content-title">jump to title</a>' in normal, "in-page links stay in the same tab"
     # Both links, including the raw one asking for target="_self" rel="opener": new tab, no opener, no referrer.
     for site in ["https://example.com", "https://example.org"]:
@@ -210,6 +211,40 @@ if browser:
     assert 'type="checkbox"' in normal, "task-list checkboxes survive"
     assert 'src="data:image/png;base64,' in normal and 'src="data:image/svg+xml;base64,' in normal, "images embed"
     assert "<svg" in normal, "Mermaid draws after sanitizing"
+    # Click a heading link inside the page and record what the browser does. The probe carries the page's nonce,
+    # like our own scripts, so the CSP lets it run.
+    page = open(path, encoding="utf-8").read()
+    nonce = re.search(r"'nonce-([^']+)'", page).group(1)
+    probe = """<script nonce="%s">
+    window.addEventListener("load", () => {
+      const anchor = document.querySelector(".header-anchor");
+      const resting = getComputedStyle(anchor);
+      const restingDelay = resting.transitionDelay, restingOpacity = resting.opacity;
+      anchor.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      setTimeout(() => {
+        const style = getComputedStyle(anchor);
+        document.body.dataset.probe = JSON.stringify({
+          focused: document.activeElement === anchor, hash: location.hash, opacity: style.opacity,
+          outline: style.outlineStyle, restingOpacity, restingDelay,
+          scrollBehavior: getComputedStyle(document.documentElement).scrollBehavior,
+          scrollMargin: getComputedStyle(anchor.parentElement).scrollMarginTop,
+        });
+      }, 1500);
+    });
+    </script></body>""" % nonce
+    probed = path.replace(".html", "-probe.html")
+    with open(probed, "w", encoding="utf-8") as out:
+        out.write(page[:page.rindex("</body>")] + probe + page[page.rindex("</body>") + len("</body>"):])
+    dom = subprocess.run(
+        [browser, "--headless", "--disable-gpu", "--virtual-time-budget=8000", "--dump-dom", "file://" + probed],
+        capture_output=True, text=True, timeout=60,
+    ).stdout
+    os.remove(probed)
+    result = json.loads(re.search(r"data-probe=\"([^\"]*)\"", dom).group(1).replace("&quot;", '"'))
+    assert result["restingOpacity"] == "0" and result["restingDelay"] == "0.15s", result
+    assert result["focused"] and result["hash"] == "#user-content-title", "clicked link keeps focus: %s" % result
+    assert result["opacity"] == "1" and result["outline"] == "auto", "focused link shows with a native ring"
+    assert result["scrollBehavior"] == "smooth" and result["scrollMargin"] == "24px", result
     print("ok, pygments:", bool(markdown_preview.pygments), "| browser checks: passed")
 else:
     print("ok, pygments:", bool(markdown_preview.pygments), "| browser checks: skipped (no Chrome/Chromium)")

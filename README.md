@@ -19,7 +19,8 @@ Sublime Text 4. When installing by hand, run **Package Control: Satisfy Librarie
 
 Package Control:
 
-1. Command Palette → **Package Control: Add Repository** → `https://github.com/danglduy/markdown-preview-sublime`
+1. Command Palette → **Package Control: Add Repository** → `https://raw.githubusercontent.com/danglduy/markdown-preview-sublime/main/repository.json`
+   (this file makes Package Control install tagged releases, so it shows versions such as 0.0.11, and installs Pygments)
 2. Command Palette → **Package Control: Install Package** → `markdown-preview-sublime`
 
 Manual: clone into the Packages folder (Command Palette → **Preferences: Browse Packages**).
@@ -53,5 +54,7 @@ Remote images load over `https` only, as in VS Code's strict preview. They still
 `vendor/` holds unmodified copies of markdown-it-py 3.0.0, mdurl 0.1.2 and mdit-py-plugins 0.4.2, plus the browser builds of Mermaid 12.2.0 (MIT) and DOMPurify 3.4.17 (MPL-2.0 or Apache-2.0), licences alongside. The Python libraries are the last releases that still support the Python 3.8 plugin host of older Sublime Text 4 builds.
 
 To update them, change the pinned versions in `scripts/update-vendor.sh` and run it. It rebuilds `vendor/` from PyPI.
+
+To release, push to `main` and run `gh release create <version> --target main`: Package Control installs the newest version tag.
 
 Check rendering outside Sublime with `python3 tests/check_render.py`. With Chrome or Chromium installed, it also opens hostile documents headlessly and checks what the browser actually shows.

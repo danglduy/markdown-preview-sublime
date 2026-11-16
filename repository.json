@@ -1,0 +1,19 @@
+{
+  "$schema": "sublime://packagecontrol.io/schemas/repository",
+  "schema_version": "4.0.0",
+  "packages": [
+    {
+      "name": "markdown-preview-sublime",
+      "details": "https://github.com/danglduy/markdown-preview-sublime",
+      "description": "Preview Markdown in the browser with GitHub styling, rendered locally and sanitized with DOMPurify",
+      "author": "danglduy",
+      "releases": [
+        {
+          "sublime_text": ">=4000",
+          "tags": true,
+          "libraries": ["pygments"]
+        }
+      ]
+    }
+  ]
+}
