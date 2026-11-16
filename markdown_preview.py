@@ -49,7 +49,7 @@ def highlight_code(code, lang, attrs):
 
 
 # GitHub-flavoured: CommonMark plus tables, strikethrough, task lists, footnotes and heading anchors.
-# ponytail: no bare-URL autolinking, vendor linkify-it-py + uc-micro-py and enable "linkify" if it's missed.
+# Bare URLs are not autolinked: that needs linkify-it-py and uc-micro-py vendored and the "linkify" rule enabled.
 MARKDOWN = (
     MarkdownIt("commonmark", {"highlight": highlight_code})
     .enable(["table", "strikethrough"])
@@ -211,7 +211,7 @@ def render_fence(self, tokens, idx, options, env):
 
 MARKDOWN.add_render_rule("fence", render_fence)
 
-# ponytail: hand-trimmed GitHub look, swap in the full github-markdown-css if something looks off.
+# A hand-trimmed copy of GitHub's look; the full github-markdown-css covers rarer elements if they ever look off.
 PAGE = """<!DOCTYPE html>
 <html>
 <head>
